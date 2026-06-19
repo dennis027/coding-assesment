@@ -1,0 +1,55 @@
+services:
+  # Laravel Application Service
+  app:
+    build:
+      context: ./laravel
+      dockerfile: Dockerfile
+    image: silktech-backend
+    container_name: silktech-app
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "8000:8000"  # <--- Binds your host port 8000 to the artisan server port 8000
+    environment:
+      SERVICE_NAME: app
+      SERVICE_TAGS: dev
+    volumes:
+      - ./laravel:/var/www
+    networks:
+      - silktech-network
+    # --- THIS OVERRIDES php-fpm AND STARTS THE SERVER AUTOMATICALLY ON BOOT ---
+    command: php artisan serve --host=0.0.0.0 --port=8000
+
+  # Database Service s 
+  db:
+    image: mysql:8.0
+    container_name: silktech-db
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: silkcommerce
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - silktech-dbdata:/var/lib/mysql
+    networks:
+      - silktech-network
+
+  # Adminer Database Management Service
+  adminer:
+    image: adminer:latest
+    container_name: silktech-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - silktech-network
+
+networks:
+  silktech-network:
+    driver: bridge
+
+volumes:
+  silktech-dbdata:
+    driver: local
