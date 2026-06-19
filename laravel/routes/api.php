@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Route;
 
 // Public Authentication Routes
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->name('login');
 
 // Webhook route — no auth required
 Route::post('/webhooks/payment', [PaymentWebhookController::class, 'handle']);
@@ -19,9 +19,10 @@ Route::middleware('auth:sanctum')->group(function () {
         return $request->user();
     });
 
-    Route::get('/products', [ProductController::class, 'index']);
-    Route::post('/products', [ProductController::class, 'store']);
-    Route::patch('/products/{product}/stock', [ProductController::class, 'adjustStock']);
-    
+    // Product Routes
+    Route::apiResource('products', ProductController::class)->only(['index', 'store']);
+    Route::patch('products/{product}/stock', [ProductController::class, 'adjustStock']);
+
+    // Logout
     Route::post('/logout', [AuthController::class, 'logout']);
 });
