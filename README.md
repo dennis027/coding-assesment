@@ -9,16 +9,16 @@
 ## UI Screenshots
 
 ### Login Screen
-![Login screen](docs/screenshots/login.svg)
+![Login screen](docs/screenshots/login.png)
 
 ### Register Screen
-![Register screen](docs/screenshots/register.svg)
+![Register screen](docs/screenshots/register.png)
 
 ### Dashboard — Product Grid
-![Dashboard](docs/screenshots/dashboard.svg)
+![Dashboard](docs/screenshots/dashboard.png)
 
 ### Stock Adjustment — Interaction States
-![Stock adjustment states](docs/screenshots/stock-adjustment.svg)
+![Stock adjustment states](docs/screenshots/stock-adjustment.png)
 
 ---
 
