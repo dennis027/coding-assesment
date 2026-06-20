@@ -62,7 +62,7 @@ return [
     'providers' => [
         'users' => [
             'driver' => 'eloquent',
-            'model' => App\Models\User::class,
+            'model' => App\Models\Merchant::class,  // Updated to use the Merchant model instead of the default User model
         ],
 
         // 'users' => [
