@@ -12,40 +12,38 @@ const emit = defineEmits(['stock-updated'])
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const stock    = ref(props.currentStock)
-const delta    = ref(0)
+const quantity = ref(0)  // Just the number, no sign
 const loading  = ref(false)
 const errorMsg = ref('')
 const savedMsg = ref('')
 
 // ── Computed ──────────────────────────────────────────────────────────────────
-const projectedStock   = computed(() => stock.value + delta.value)
-const isLowStock       = computed(() => stock.value > 0 && stock.value <= props.lowStockThreshold)
-const isOutOfStock     = computed(() => stock.value === 0)
-const wouldGoNegative  = computed(() => projectedStock.value < 0)
+const isLowStock      = computed(() => stock.value > 0 && stock.value <= props.lowStockThreshold)
+const isOutOfStock    = computed(() => stock.value === 0)
 
-// − button disabled when going one more negative would take projected below 0
-const decreaseDisabled = computed(() => loading.value || (stock.value + (delta.value - 1)) < 0)
-const saveDisabled     = computed(() => loading.value || delta.value === 0 || wouldGoNegative.value)
+const wouldGoNegativeOnRemove = computed(() => (stock.value - quantity.value) < 0)
+
+const addDisabled    = computed(() => loading.value || quantity.value <= 0)
+const removeDisabled = computed(() => loading.value || quantity.value <= 0 || wouldGoNegativeOnRemove.value)
 
 // ── Methods ───────────────────────────────────────────────────────────────────
-function increment() { delta.value++; clearMsgs() }
-function decrement() {
-  // Allow delta to go negative — that is how stock is removed
-  if ((stock.value + (delta.value - 1)) >= 0) {
-    delta.value--
+function increment() { quantity.value++; clearMsgs() }
+function decrement() { 
+  if (quantity.value > 0) {
+    quantity.value--
     clearMsgs()
   }
 }
 function onInputChange(e) {
   const val = parseInt(e.target.value, 10)
-  delta.value = isNaN(val) ? 0 : val
+  quantity.value = isNaN(val) ? 0 : Math.max(0, val)  // Never allow negative input
   clearMsgs()
 }
 function clearMsgs() { errorMsg.value = ''; savedMsg.value = '' }
 
 // ── Save — PATCH /api/products/{id}/stock ─────────────────────────────────────
-async function save() {
-  if (saveDisabled.value) return
+async function saveAdjustment(delta) {
+  if (delta === 0 || loading.value) return
 
   loading.value  = true
   errorMsg.value = ''
@@ -61,17 +59,16 @@ async function save() {
         'Accept':        'application/json',
         'Authorization': `Bearer ${token}`,
       },
-      // delta is positive to add (e.g. 10), negative to subtract (e.g. -5)
-      body: JSON.stringify({ delta: delta.value }),
+      body: JSON.stringify({ delta }),
     })
 
     const data = await res.json()
 
     if (!res.ok) throw new Error(data.message ?? `Error ${res.status}`)
 
-    stock.value    = data.stock_quantity   // always trust the server value
-    delta.value    = 0
-    savedMsg.value = `Saved — ${data.stock_quantity} units`
+    stock.value    = data.stock_quantity
+    quantity.value = 0
+    savedMsg.value = `✓ Stock updated to ${data.stock_quantity} units`
     setTimeout(() => { savedMsg.value = '' }, 2500)
 
     emit('stock-updated', data.stock_quantity)
@@ -82,6 +79,9 @@ async function save() {
     loading.value = false
   }
 }
+
+function onAdd() { saveAdjustment(quantity.value) }
+function onRemove() { saveAdjustment(-quantity.value) }
 </script>
 
 <template>
@@ -105,52 +105,69 @@ async function save() {
     <div class="sw__controls">
       <button
         class="sw__stepper"
-        :disabled="decreaseDisabled"
-        aria-label="Decrease"
+        :disabled="loading || quantity === 0"
+        aria-label="Decrease quantity"
         @click="decrement"
       >−</button>
 
       <input
         class="sw__input"
         type="number"
-        :value="delta"
+        min="0"
+        :value="quantity"
         :disabled="loading"
-        aria-label="Adjustment amount"
+        placeholder="0"
+        aria-label="Quantity to add or remove"
         @input="onInputChange"
       />
 
       <button
         class="sw__stepper"
         :disabled="loading"
-        aria-label="Increase"
+        aria-label="Increase quantity"
         @click="increment"
       >+</button>
     </div>
 
-    <!-- What will happen label -->
+    <!-- Hint -->
     <p class="sw__hint">
-      <span v-if="delta > 0" class="sw__hint--add">Adding {{ delta }} units</span>
-      <span v-else-if="delta < 0" class="sw__hint--remove">Removing {{ Math.abs(delta) }} units</span>
-      <span v-else class="sw__hint--idle">Use + or − to adjust, or type a number (negative to remove)</span>
+      <span v-if="quantity === 0" class="sw__hint--idle">Enter quantity, then choose Add or Remove</span>
+      <span v-else class="sw__hint--active">Ready to adjust by {{ quantity }} units</span>
     </p>
 
-    <!-- Result preview -->
-    <p v-if="delta !== 0" class="sw__preview" :class="{ 'sw__preview--danger': wouldGoNegative }">
-      Result: <strong>{{ projectedStock }}</strong> units
-      <span v-if="wouldGoNegative"> — cannot go below 0</span>
-    </p>
+    <!-- Add / Remove buttons -->
+    <div class="sw__actions">
+      <button
+        class="sw__btn sw__btn--add"
+        :disabled="addDisabled"
+        @click="onAdd"
+      >
+        <span v-if="loading" class="sw__spin">⟳</span>
+        <span v-else>+</span>
+        Add {{ quantity }}
+      </button>
 
-    <!-- Save -->
-    <button class="sw__save" :disabled="saveDisabled" @click="save">
-      <span v-if="loading" class="sw__spin">⟳</span>
-      {{ loading ? 'Saving…' : 'Save' }}
-    </button>
+      <button
+        class="sw__btn sw__btn--remove"
+        :disabled="removeDisabled"
+        @click="onRemove"
+      >
+        <span v-if="loading" class="sw__spin">⟳</span>
+        <span v-else>−</span>
+        Remove {{ quantity }}
+      </button>
+    </div>
+
+    <!-- Warning if removing would go negative -->
+    <p v-if="quantity > 0 && wouldGoNegativeOnRemove" class="sw__warning">
+      ⚠ Cannot remove {{ quantity }} — only {{ stock }} available
+    </p>
 
     <!-- Success -->
-    <p v-if="savedMsg" class="sw__success" role="status">✓ {{ savedMsg }}</p>
+    <p v-if="savedMsg" class="sw__success" role="status">{{ savedMsg }}</p>
 
     <!-- Error -->
-    <p v-if="errorMsg" class="sw__error" role="alert">{{ errorMsg }}</p>
+    <p v-if="errorMsg" class="sw__error" role="alert">❌ {{ errorMsg }}</p>
 
   </div>
 </template>
@@ -191,6 +208,7 @@ async function save() {
   background: #f9fafb; font-size: 1.2rem; cursor: pointer;
   transition: background .12s;
   display: flex; align-items: center; justify-content: center;
+  font-weight: 600;
 }
 .sw__stepper:hover:not(:disabled) { background: #e5e7eb; }
 .sw__stepper:disabled              { opacity: .4; cursor: not-allowed; }
@@ -199,31 +217,32 @@ async function save() {
   flex: 1; height: 36px; min-width: 0;
   text-align: center;
   border: 1px solid #d1d5db; border-radius: 7px;
-  font-size: 1rem; padding: 0 .5rem; outline: none;
+  font-size: 1rem; font-weight: 600; padding: 0 .5rem; outline: none;
 }
-.sw__input:focus    { border-color: #2563eb; }
+.sw__input:focus    { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
 .sw__input:disabled { opacity: .5; background: #f9fafb; }
 
-/* Preview */
-.sw__hint { font-size: .78rem; margin: 0 0 .4rem; min-height: 1.2em; }
-.sw__hint--idle   { color: #9ca3af; }
-.sw__hint--add    { color: #2563eb; font-weight: 500; }
-.sw__hint--remove { color: #dc2626; font-weight: 500; }
+/* Hint */
+.sw__hint { font-size: .78rem; margin: 0 0 .5rem; min-height: 1.2em; color: #9ca3af; }
+.sw__hint--active { color: #2563eb; font-weight: 500; }
 
-.sw__preview         { font-size: .83rem; color: #374151; margin: 0 0 .7rem; }
-.sw__preview--danger { color: #dc2626; font-weight: 600; }
+/* Warning */
+.sw__warning { font-size: .78rem; color: #d97706; margin: 0 0 .5rem; font-weight: 500; }
 
-/* Save */
-.sw__save {
-  width: 100%; padding: .6rem;
-  background: #2563eb; color: #fff;
+/* Add / Remove buttons */
+.sw__actions { display: flex; gap: .5rem; }
+.sw__btn {
+  flex: 1; padding: .6rem;
   border: none; border-radius: 7px;
-  font-size: .92rem; font-weight: 600; cursor: pointer;
+  font-size: .9rem; font-weight: 600; cursor: pointer;
   transition: background .15s;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
 }
-.sw__save:hover:not(:disabled) { background: #1d4ed8; }
-.sw__save:disabled              { opacity: .5; cursor: not-allowed; }
+.sw__btn--add    { background: #10b981; color: #fff; }
+.sw__btn--add:hover:not(:disabled)    { background: #059669; }
+.sw__btn--remove { background: #ef4444; color: #fff; }
+.sw__btn--remove:hover:not(:disabled) { background: #dc2626; }
+.sw__btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .sw__spin { display: inline-block; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -231,7 +250,7 @@ async function save() {
 /* Messages */
 .sw__success, .sw__error {
   margin-top: .6rem; font-size: .82rem;
-  border-radius: 7px; padding: .45rem .7rem; line-height: 1.5;
+  border-radius: 7px; padding: .5rem .7rem; line-height: 1.5;
 }
 .sw__success { background: #ecfdf5; border: 1px solid #6ee7b7; color: #065f46; }
 .sw__error   { background: #fef2f2; border: 1px solid #fca5a5; color: #dc2626; }
