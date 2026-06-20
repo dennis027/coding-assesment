@@ -29,18 +29,7 @@ npm run test                  # Vitest unit tests
 
 ---
 
-## Time breakdown
 
-| Part | Time |
-|------|------|
-| Part 1 — Webhook handler | ~60 min |
-| Part 2 — Product API | ~45 min |
-| Part 3 — SQL & bug | ~20 min |
-| Part 4 — Vue component | ~55 min |
-| Part 4b — Unit tests | ~30 min |
-| Part 5 — Short answers & README | ~30 min |
-
----
 
 ## Assumptions
 
@@ -77,6 +66,115 @@ Both pass the initial "does this transaction_id exist?" check simultaneously. Th
 We persist every event. A `failed` event for a `transaction_id` that never previously completed has no effect on the order. A `reversed` event arriving after a `completed` event is recorded, but deliberately does **not** automatically re-open the order—reversals involve accounting side effects (refunding a balance, notifying the merchant) that deserve their own workflow, not a webhook side-effect. An ops alert on `reversed` events is the right next step.
 
 ---
+
+## Testing Webhook Locally with ngrok
+
+### What is ngrok?
+
+ngrok is a tunneling tool that exposes your local development server to the internet via a public HTTPS URL. Payment providers like M-Pesa cannot send webhooks to `localhost:8000`, so ngrok creates a secure tunnel that maps `https://abc123.ngrok.io` → `http://localhost:8000`. This lets you test production-like webhook scenarios without deploying code, making debugging and development much faster.
+
+### Installation
+
+Download ngrok from `https://ngrok.com/download` for your OS (Windows/Mac/Linux). Extract the binary and run `./ngrok http 8000` to start tunneling. It will display a public URL like `https://abc123.ngrok.io` that you register with the payment provider. All webhook requests to that URL are forwarded to your local Laravel server on port 8000.
+
+### Usage for Testing
+
+Run your Laravel server with `php artisan serve`, then in another terminal run `./ngrok http 8000`. Copy the generated HTTPS URL (e.g., `https://abc123.ngrok.io`) and register it as your webhook endpoint with the payment provider. When the provider sends a callback, ngrok relays it to your local app, where you can see request/response in the ngrok dashboard and in your Laravel logs simultaneously.
+
+---
+
+## Webhook Request Documentation (Postman)
+
+### Sample Payload
+
+The webhook expects a POST to `/api/webhooks/payment` with this JSON structure:
+
+```json
+{
+  "provider": "mpesa",
+  "transaction_id": "QFL3X9Y2KP",
+  "order_reference": "SC-ORD-10456",
+  "amount": 2500.00,
+  "currency": "KES",
+  "msisdn": "254712345678",
+  "status": "completed",
+  "occurred_at": "2026-06-18T10:32:00Z"
+}
+```
+
+**Field explanations:**
+- `provider` — Payment service name (mpesa, airtel, stripe, etc.)
+- `transaction_id` — Unique identifier for this payment; used for idempotency
+- `order_reference` — Links to the `merchant_orders.order_reference` being paid
+- `amount` — Payment amount in minor units (2500.00 KES)
+- `currency` — ISO 4217 currency code
+- `msisdn` — Payer's phone number (M-Pesa specific)
+- `status` — One of `completed`, `failed`, `reversed`
+- `occurred_at` — ISO 8601 timestamp of when the payment event occurred
+
+### Response Codes
+
+| Status | Scenario |
+|--------|----------|
+| `200 OK` | Payment already processed or idempotent duplicate detected |
+| `201 Created` | New payment processed successfully; order updated to paid |
+| `400 Bad Request` | Validation failed; order_reference doesn't exist |
+| `422 Unprocessable Entity` | `failed` or `reversed` status for non-existent order |
+| `500 Internal Server Error` | DB transaction failed; provider should retry |
+
+### Testing in Postman
+
+1. Set method to **POST** and URL to `http://localhost:8000/api/webhooks/payment` (or your ngrok URL)
+2. Set header `Content-Type: application/json`
+3. Paste the sample payload into the request body
+4. Click **Send**
+5. Check response: should be `201` with `payment_id` and `note: order_marked_paid`
+6. Send the exact same payload again: should return `200` with `note: order_already_paid` (idempotency)
+7. To test reversal: change `transaction_id` and `status` to `reversed`, send again
+
+### Retry Simulation
+
+Postman can simulate provider retries by sending the same payload multiple times. The webhook should always return `200` for duplicate `transaction_id` values, proving idempotency. Use the **Collection Runner** to send 5 identical requests in quick succession and observe that only the first creates a new payment row, the rest return cached `200` responses.
+
+---
+
+## Database Schema
+
+```
+payments(
+  id,
+  transaction_id UNIQUE,  ← Catches concurrent duplicates
+  order_reference,
+  amount,
+  currency,
+  msisdn,
+  status,
+  occurred_at,
+  raw_payload JSON,
+  created_at
+)
+
+merchant_orders(
+  id,
+  merchant_id,
+  order_reference UNIQUE,
+  status (pending | paid | pending_refund),
+  total_amount,
+  created_at
+)
+```
+
+---
+
+## Summary
+
+| Scenario | Outcome |
+|----------|---------|
+| First webhook for an order | Order marked `paid`, payment persisted, return `201` |
+| Duplicate webhook (same `transaction_id`) | Return `200`, no DB write, no re-lock contention |
+| Two concurrent duplicates | One succeeds, second hits unique constraint, returns `200` |
+| `reversed` after `completed` | Payment recorded, order marked `pending_refund`, ops alert |
+| Unknown order reference | Payment recorded for audit, return `400`, ops investigates |
 
 ## Part 3b — Bug Analysis
 
