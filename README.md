@@ -1,7 +1,190 @@
 # Silktech Full-Stack Assessment — Submission
 
-**Candidate:** [Your Name]  
-**Stack:** PHP 8.1+ / Laravel 10, MySQL, Vue 3 (Composition API), Vitest  
+**Candidate:** [Your Name]
+**Stack:** PHP 8.1+ / Laravel 10, MySQL, Vue 3 (Composition API), Vitest
+
+---
+
+## UI Screenshots
+
+### Login Screen
+![Login screen](docs/screenshots/login.svg)
+
+### Dashboard — Product Grid
+![Dashboard](docs/screenshots/dashboard.svg)
+
+### Stock Adjustment — Interaction States
+![Stock adjustment states](docs/screenshots/stock-adjustment.svg)
+
+---
+
+## API Documentation
+
+Full interactive API documentation (Postman):
+**https://documenter.getpostman.com/view/55427973/2sBXwvJooR**
+
+### Endpoints at a glance
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/register` | — | Create merchant account |
+| `POST` | `/api/login` | — | Login, returns Bearer token |
+| `POST` | `/api/logout` | Bearer | Revoke token |
+| `GET` | `/api/products` | Bearer | Paginated product list |
+| `POST` | `/api/products` | Bearer | Create product |
+| `PATCH` | `/api/products/{id}/stock` | Bearer | Adjust stock by delta |
+| `POST` | `/api/webhooks/payment` | Signature | Payment callback handler |
+
+### Authentication
+
+All product endpoints require the `Authorization: Bearer {token}` header. Obtain the token from `/api/login` or `/api/register`. Without it, the API returns:
+
+```json
+{ "message": "You need to log in." }
+```
+
+### Register — `POST /api/register`
+
+**Request body:**
+```json
+{
+  "name": "test user",
+  "business_name": "test business",
+  "email": "test@silktech.com",
+  "password": "password123"
+}
+```
+
+**Success `201`:**
+```json
+{
+  "access_token": "4|VKAFn9BuNrZvkeK364k76sNhrzoKFtXaMcjZEwze75b2209b",
+  "token_type": "Bearer",
+  "merchant": {
+    "id": 5,
+    "name": "test user",
+    "business_name": "test business",
+    "email": "test@silktech.com"
+  }
+}
+```
+
+**Error `422` (validation):**
+```json
+{
+  "message": "Validation failed.",
+  "errors": {
+    "email": ["The email has already been taken."]
+  }
+}
+```
+
+### Login — `POST /api/login`
+
+**Request body:**
+```json
+{
+  "email": "admin@silktech.com",
+  "password": "password123"
+}
+```
+
+**Success `200`:**
+```json
+{
+  "access_token": "2|YcTZF684ynmCQaapLSiaXwY2TrjG9B0pkU5aDnesaa92e347",
+  "token_type": "Bearer"
+}
+```
+
+**Error `401` (wrong credentials):**
+```json
+{ "message": "Invalid credentials." }
+```
+
+### Logout — `POST /api/logout`
+
+Include the Bearer token in the `Authorization` header. Clears the token server-side. The Vue app also removes it from `localStorage` immediately.
+
+### Get Products — `GET /api/products`
+
+Returns paginated list scoped to the authenticated merchant. Supports `?page=N`.
+
+**Response `200`:**
+```json
+{
+  "current_page": 1,
+  "data": [
+    {
+      "id": 3,
+      "merchant_id": 1,
+      "name": "Mach",
+      "price": "99.99",
+      "category": "Electronics",
+      "stock_quantity": 50,
+      "created_at": "2026-06-20T01:08:32.000000Z",
+      "updated_at": "2026-06-20T01:08:32.000000Z",
+      "deleted_at": null
+    }
+  ],
+  "last_page": 1,
+  "per_page": 20,
+  "total": 1
+}
+```
+
+### Create Product — `POST /api/products`
+
+**Request body:**
+```json
+{
+  "name": "Mach",
+  "price": 99.99,
+  "category": "Electronics",
+  "stock_quantity": 50
+}
+```
+
+**Success `201`:**
+```json
+{
+  "id": 3,
+  "merchant_id": 1,
+  "name": "Mach",
+  "price": "99.99",
+  "category": "Electronics",
+  "stock_quantity": 50,
+  "created_at": "2026-06-20T01:08:32.000000Z",
+  "updated_at": "2026-06-20T01:08:32.000000Z"
+}
+```
+
+### Adjust Stock — `PATCH /api/products/{id}/stock`
+
+**Request body:**
+```json
+{ "delta": 10 }
+```
+
+Use a positive number to add stock (`10`), negative to remove (`-5`). The API rejects any delta that would take stock below zero.
+
+**Success `200`:**
+```json
+{
+  "id": 3,
+  "name": "Mach",
+  "stock_quantity": 60
+}
+```
+
+**Error `422` (insufficient stock):**
+```json
+{ "message": "Insufficient stock. Current: 3, adjustment: -10." }
+```
+
+### Payment Webhook — `POST /api/webhooks/payment`
+
+See the [Webhook section](#part-1--idempotent-payment-webhook) below for full details.
 
 ---
 
@@ -12,10 +195,11 @@
 ```bash
 cd laravel
 composer install
-cp .env.example .env          # configure DB_* vars
+cp .env.example .env          # fill in DB_* vars
 php artisan key:generate
 php artisan migrate
-php artisan test              # runs all PHPUnit/Pest tests
+php artisan db:seed           # creates demo@silktech.io / password
+php artisan test              # runs all PHPUnit tests
 ```
 
 ### Vue (Part 4)
@@ -23,20 +207,44 @@ php artisan test              # runs all PHPUnit/Pest tests
 ```bash
 cd vue
 npm install
-npm run dev                   # Vite dev server
+npm run dev                   # Vite dev server → http://localhost:5173
 npm run test                  # Vitest unit tests
 ```
 
+### Docker (recommended — no local PHP/Node install needed)
+
+```bash
+# First time setup
+make setup
+
+# Start everything
+make up
+
+# Run tests
+make test-backend
+make test-frontend
+
+# Open a shell inside Laravel container
+make shell
+```
+
+Services started by Docker:
+
+| Service | URL |
+|---------|-----|
+| Vue dev server | http://localhost:5173 |
+| Laravel API | http://localhost:8000 |
+| MySQL | localhost:3306 |
+| Redis | localhost:6379 |
+
 ---
-
-
 
 ## Assumptions
 
-- Auth uses Laravel Sanctum (token-based). The `auth:sanctum` guard is referenced in routes; a standard Sanctum install suffices.
-- Webhook provider authentication (HMAC signature verification) is handled in a `webhook.signature` middleware registered separately. The skeleton for that middleware is not included here—real implementations vary per provider—but the hook point is clearly marked in `routes/api.php`.
-- `merchants` and `merchant_orders` tables are pre-existing per the spec; I've included a migration for them for local dev/test convenience, clearly commented.
-- The `order_reference` field on `payments` matches `merchant_orders.order_reference` directly (no join through a numeric FK), which keeps the webhook handler simpler and avoids one query. A FK-based design is equally valid.
+- Auth uses Laravel Sanctum (token-based). The `auth:sanctum` guard is referenced in routes.
+- Webhook provider authentication (HMAC signature verification) is handled in a `webhook.signature` middleware registered separately. The hook point is clearly marked in `routes/api.php`.
+- `merchants` and `merchant_orders` tables are pre-existing per the spec; a migration for them is included for local dev/test convenience, clearly commented.
+- The `order_reference` field on `payments` matches `merchant_orders.order_reference` directly (no join through a numeric FK), which keeps the webhook handler simpler and avoids one extra query.
 
 ---
 
@@ -46,48 +254,49 @@ npm run test                  # Vitest unit tests
 
 Two layers of protection work together:
 
-1. **Application check (fast path):** Before opening a transaction, we check whether `payments.transaction_id` already exists. If it does, we return `200` immediately—no DB write, no lock contention.
+1. **Application check (fast path):** Before opening a transaction, we check whether `payments.transaction_id` already exists. If it does, return `200` immediately — no DB write, no lock contention.
 
-2. **DB unique constraint + `lockForUpdate` (race condition path):** Two simultaneous duplicate deliveries can both pass the application check in the same millisecond. Inside the DB transaction, `lockForUpdate()` on the order row serialises concurrent updates to that order. The `UNIQUE` constraint on `payments.transaction_id` catches the second inserter and raises a `UniqueConstraintViolationException`, which we catch and convert to a `200` response.
+2. **DB unique constraint + `lockForUpdate` (race condition path):** Two simultaneous duplicate deliveries can both pass the application check in the same millisecond. Inside the DB transaction, `lockForUpdate()` on the order row serialises concurrent updates. The `UNIQUE` constraint on `payments.transaction_id` catches the second inserter and raises a `UniqueConstraintViolationException`, which we convert to a `200` response.
 
 ### Race condition — two retries at the same instant
 
-> What happens if two retries hit your server at the same instant?
-
-Both pass the initial "does this transaction_id exist?" check simultaneously. They both attempt `INSERT INTO payments`. The DB unique constraint lets only one succeed. The loser gets a `UniqueConstraintViolation` exception, which is caught and turned into a `200 Already processed (concurrent)` response. No duplicate row, no double order update.
+Both pass the initial check simultaneously. Both attempt `INSERT INTO payments`. The DB unique constraint lets only one succeed. The loser gets a `UniqueConstraintViolation` exception — caught and returned as `200 Already processed (concurrent)`. No duplicate row, no double order update.
 
 ### Unknown or already-paid order
 
-- **Order not found:** We persist the payment record (for audit/replay) and log a warning. We still return `201` so the provider stops retrying. The ops team can investigate via logs.
-- **Order already paid by a different transaction:** We record the new payment row (audit trail) but do not re-process or modify the order. The response includes a `note: order_already_paid` for observability.
+- **Order not found:** Return `422` — tells the provider the payload is bad, stop retrying. No payment row is created (nothing to attach it to).
+- **Amount mismatch:** Return `422` with `expected` and `received` fields — prevents partial payments being accepted as settled.
+- **Order already paid by a different transaction:** Return `422` — second completed payment for same order is rejected outright. No extra row written.
 
 ### `failed` or `reversed` arriving after `completed`
 
-We persist every event. A `failed` event for a `transaction_id` that never previously completed has no effect on the order. A `reversed` event arriving after a `completed` event is recorded, but deliberately does **not** automatically re-open the order—reversals involve accounting side effects (refunding a balance, notifying the merchant) that deserve their own workflow, not a webhook side-effect. An ops alert on `reversed` events is the right next step.
+Payment events are persisted for audit. A `reversed` event on a paid order flags it as `pending_refund` for ops review — we never auto-refund, that has accounting side effects that deserve their own workflow.
 
 ---
 
-## Testing Webhook Locally with ngrok
+## Testing the Webhook Locally with ngrok
 
-### What is ngrok?
+ngrok creates a public HTTPS URL that tunnels to your local server, letting M-Pesa (or any provider) send real callbacks to `localhost:8000` during development.
 
-ngrok is a tunneling tool that exposes your local development server to the internet via a public HTTPS URL. Payment providers like M-Pesa cannot send webhooks to `localhost:8000`, so ngrok creates a secure tunnel that maps `https://abc123.ngrok.io` → `http://localhost:8000`. This lets you test production-like webhook scenarios without deploying code, making debugging and development much faster.
+```bash
+# Install: https://ngrok.com/download
+# Then:
+php artisan serve          # terminal 1
+./ngrok http 8000          # terminal 2
+```
 
-### Installation
+Copy the generated URL (e.g. `https://abc123.ngrok.io`) and register it with the provider as:
+```
+https://abc123.ngrok.io/api/webhooks/payment
+```
 
-Download ngrok from `https://ngrok.com/download` for your OS (Windows/Mac/Linux). Extract the binary and run `./ngrok http 8000` to start tunneling. It will display a public URL like `https://abc123.ngrok.io` that you register with the payment provider. All webhook requests to that URL are forwarded to your local Laravel server on port 8000.
-
-### Usage for Testing
-
-Run your Laravel server with `php artisan serve`, then in another terminal run `./ngrok http 8000`. Copy the generated HTTPS URL (e.g., `https://abc123.ngrok.io`) and register it as your webhook endpoint with the payment provider. When the provider sends a callback, ngrok relays it to your local app, where you can see request/response in the ngrok dashboard and in your Laravel logs simultaneously.
+The ngrok dashboard at `http://127.0.0.1:4040` shows every request and response in real time, making it easy to debug webhook payloads without touching production.
 
 ---
 
 ## Webhook Request Documentation (Postman)
 
 ### Sample Payload
-
-The webhook expects a POST to `/api/webhooks/payment` with this JSON structure:
 
 ```json
 {
@@ -102,39 +311,32 @@ The webhook expects a POST to `/api/webhooks/payment` with this JSON structure:
 }
 ```
 
-**Field explanations:**
-- `provider` — Payment service name (mpesa, airtel, stripe, etc.)
-- `transaction_id` — Unique identifier for this payment; used for idempotency
-- `order_reference` — Links to the `merchant_orders.order_reference` being paid
-- `amount` — Payment amount in minor units (2500.00 KES)
-- `currency` — ISO 4217 currency code
-- `msisdn` — Payer's phone number (M-Pesa specific)
-- `status` — One of `completed`, `failed`, `reversed`
-- `occurred_at` — ISO 8601 timestamp of when the payment event occurred
+| Field | Description |
+|-------|-------------|
+| `provider` | Payment network: `mpesa`, `airtel`, `stripe`, etc. |
+| `transaction_id` | Provider's unique ID — the idempotency key |
+| `order_reference` | Links to `merchant_orders.order_reference` |
+| `amount` | Must exactly match `merchant_orders.total_amount` |
+| `currency` | ISO 4217 code (e.g. `KES`) |
+| `msisdn` | Payer's phone number (M-Pesa specific, nullable) |
+| `status` | One of `completed`, `failed`, `reversed` |
+| `occurred_at` | ISO 8601 timestamp of the payment event |
 
 ### Response Codes
 
 | Status | Scenario |
 |--------|----------|
-| `200 OK` | Payment already processed or idempotent duplicate detected |
-| `201 Created` | New payment processed successfully; order updated to paid |
-| `400 Bad Request` | Validation failed; order_reference doesn't exist |
-| `422 Unprocessable Entity` | `failed` or `reversed` status for non-existent order |
-| `500 Internal Server Error` | DB transaction failed; provider should retry |
+| `200 OK` | Duplicate — already processed, no action taken |
+| `201 Created` | New payment processed, order updated to `paid` |
+| `422 Unprocessable` | Bad reference, amount mismatch, or order already paid |
+| `500 Internal Server Error` | DB failure — provider should retry |
 
-### Testing in Postman
+### Idempotency Testing (Postman)
 
-1. Set method to **POST** and URL to `http://localhost:8000/api/webhooks/payment` (or your ngrok URL)
-2. Set header `Content-Type: application/json`
-3. Paste the sample payload into the request body
-4. Click **Send**
-5. Check response: should be `201` with `payment_id` and `note: order_marked_paid`
-6. Send the exact same payload again: should return `200` with `note: order_already_paid` (idempotency)
-7. To test reversal: change `transaction_id` and `status` to `reversed`, send again
-
-### Retry Simulation
-
-Postman can simulate provider retries by sending the same payload multiple times. The webhook should always return `200` for duplicate `transaction_id` values, proving idempotency. Use the **Collection Runner** to send 5 identical requests in quick succession and observe that only the first creates a new payment row, the rest return cached `200` responses.
+1. `POST` the sample payload → expect `201`, order is `paid`
+2. `POST` the exact same payload again → expect `200 Already processed`
+3. Change `transaction_id`, keep everything else → expect `422 Order already paid`
+4. Use Postman **Collection Runner** with 5 concurrent requests to prove only 1 payment row is created
 
 ---
 
@@ -143,38 +345,43 @@ Postman can simulate provider retries by sending the same payload multiple times
 ```
 payments(
   id,
-  transaction_id UNIQUE,  ← Catches concurrent duplicates
+  transaction_id    UNIQUE,   ← DB-level duplicate guard
+  provider,
   order_reference,
   amount,
   currency,
   msisdn,
   status,
   occurred_at,
-  raw_payload JSON,
-  created_at
+  raw_payload       JSON,     ← full payload stored for audit/replay
+  created_at,
+  updated_at
 )
 
 merchant_orders(
   id,
   merchant_id,
-  order_reference UNIQUE,
-  status (pending | paid | pending_refund),
+  order_reference   UNIQUE,
+  status            ENUM(pending, paid, pending_refund, cancelled),
   total_amount,
-  created_at
+  created_at,
+  updated_at
+)
+
+products(
+  id,
+  merchant_id,
+  name,
+  price             DECIMAL(12,2),
+  category,
+  stock_quantity    UNSIGNED INT,
+  deleted_at,       ← soft delete
+  created_at,
+  updated_at
 )
 ```
 
 ---
-
-## Summary
-
-| Scenario | Outcome |
-|----------|---------|
-| First webhook for an order | Order marked `paid`, payment persisted, return `201` |
-| Duplicate webhook (same `transaction_id`) | Return `200`, no DB write, no re-lock contention |
-| Two concurrent duplicates | One succeeds, second hits unique constraint, returns `200` |
-| `reversed` after `completed` | Payment recorded, order marked `pending_refund`, ops alert |
-| Unknown order reference | Payment recorded for audit, return `400`, ops investigates |
 
 ## Part 3b — Bug Analysis
 
@@ -186,19 +393,14 @@ foreach ($cart->items as $item) {
         $product->save();
     }
 }
-
-Order::create([
-    'cart_id' => $cart->id,
-    'status' => 'confirmed',
-]);
+Order::create(['cart_id' => $cart->id, 'status' => 'confirmed']);
 ```
 
-### Bug 1 — Race condition / no atomic update
+### Bug 1 — Race condition (read-modify-write)
 
-`Product::find()` reads stock into PHP memory. Between the `find()` and `save()`, another concurrent request can read the same stale value and both deduct. A cart with 5 items also processes them one by one, so if stock is 3 and a concurrent request runs in between item 2 and item 3, you can oversell.
+`Product::find()` reads stock into PHP memory. Between `find()` and `save()`, a concurrent request reads the same stale value. Both deduct and save — overselling.
 
-**Fix:** Use `lockForUpdate()` inside a DB transaction, or use an atomic `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?`. Only update if the WHERE matches; check `affected rows` to detect failure.
-
+**Fix:** Single atomic SQL UPDATE inside a transaction:
 ```php
 DB::transaction(function () use ($cart) {
     foreach ($cart->items as $item) {
@@ -211,78 +413,71 @@ DB::transaction(function () use ($cart) {
             throw new \RuntimeException("Insufficient stock for product {$item->product_id}");
         }
     }
-
     Order::create(['cart_id' => $cart->id, 'status' => 'confirmed']);
 });
 ```
 
-### Bug 2 — Order created even when stock check fails
+### Bug 2 — Order confirmed even when stock check silently fails
 
-If `$product->stock_quantity < $item->quantity` for any item, the `if` block is silently skipped — stock is not deducted — but the `Order::create()` runs anyway, creating a confirmed order for items that were never actually reserved. The customer gets an order confirmation for stock that wasn't committed.
+If any item fails `stock_quantity >= $item->quantity`, the `if` block is skipped silently, but `Order::create()` runs anyway — confirmed order for unreserved items.
 
-**Fix:** Throw an exception (or return an error) inside the loop when stock is insufficient, and wrap everything in a transaction so the order is only created when all stock deductions succeed.
+**Fix:** Throw inside the loop on failure; wrap everything in a transaction so `Order::create()` only runs if all items succeed.
 
-### Bug 3 (bonus) — No transaction wrapping
+### Bug 3 — No transaction wrapping
 
-If the process crashes mid-loop (e.g. after deducting items 1–3 but before item 4), you end up with partially deducted stock and no order. All stock changes and the order creation must be wrapped in a single DB transaction.
+A crash mid-loop leaves partially deducted stock with no order created — inconsistent state with no way to recover.
+
+**Fix:** Entire loop + `Order::create()` must be inside `DB::transaction()`.
 
 ---
 
 ## Part 5 — Short Answers
 
-### Part 5: M-Pesa paid but order still shows "pending" after 20 minutes
+### M-Pesa paid but order still shows "pending" after 20 minutes
 
-1. **Check `payments` for the `transaction_id`.** Did the webhook arrive at all? If there's no row, the callback never reached us—or it arrived and failed validation silently.
-
-2. **Check application logs** around the timestamp for the webhook endpoint. Look for errors, validation failures, or the `order_not_found` note that gets logged if the `order_reference` didn't match.
-
-3. **Check the provider dashboard.** Did M-Pesa record a successful callback delivery? If they show a non-200 response from us, or no delivery attempt, the callback never left their side (timing delay, their outage).
-
-4. **Check the `merchant_orders` table.** Is the order's `order_reference` exactly what's in the payload? A formatting mismatch (e.g. `SC-ORD-10456` vs `SCORD10456`) would trigger `order_not_found`.
-
-5. **Check whether our server returned 500** at any point, causing M-Pesa to retry. If retries are still in-flight, the order might be updated imminently.
-
-6. **If the payment is confirmed by M-Pesa but we have no record,** manually replay the webhook using the raw payload from the provider dashboard and reconcile the order.
+1. Check `payments` table for the `transaction_id` — did the webhook arrive at all?
+2. Check application logs for the webhook endpoint — validation errors, `order_not_found` warnings?
+3. Check the M-Pesa dashboard — did they record a successful delivery? Non-200 from us = they'll retry.
+4. Check `order_reference` format exactly — `SC-ORD-10456` vs `SCORD10456` would miss.
+5. Check if our server returned `500` — retries may still be in-flight.
+6. If M-Pesa confirms payment but we have no row — manually replay from the raw payload in their dashboard.
 
 ---
 
-### Part 6: Adding a new provider (Airtel Money) without rewriting the handler
+### Adding Airtel Money without rewriting the webhook handler
 
-The ingestion layer should use a **normaliser/adapter pattern**:
+Use a **normaliser/adapter pattern**:
 
 ```
-IncomingRequest → ProviderNormaliser (per-provider) → NormalisedPaymentDTO → WebhookHandler
+IncomingRequest → ProviderNormaliser → NormalisedPaymentDTO → WebhookHandler
 ```
 
-- A `PaymentNormaliserInterface` defines `normalise(array $rawPayload): NormalisedPaymentDTO`.
-- Each provider (`MpesaNormaliser`, `AirtelNormaliser`) implements it, mapping their shape to the common DTO.
-- A `NormaliserFactory` (or Laravel's service container) resolves the right normaliser from a `provider` field in the URL or a signature header.
-- The core `WebhookHandler` only ever sees `NormalisedPaymentDTO` — it never knows which provider sent the event.
+- `PaymentNormaliserInterface` defines `normalise(array $raw): NormalisedPaymentDTO`
+- `MpesaNormaliser`, `AirtelNormaliser` each implement it
+- A factory resolves the right normaliser from the `provider` field in the URL/header
+- The core handler only ever sees `NormalisedPaymentDTO` — no provider-specific code
 
-Adding Airtel Money means writing one new `AirtelNormaliser` class and registering it in the factory. The handler, idempotency logic, and order-update logic are untouched.
-
----
-
-### Part 7: Two merchants click "+5 stock" within a second from different tabs
-
-**What could go wrong on the frontend:**
-
-If both tabs read `currentStock: 10` from the initial page load, apply `delta: +5` locally, and both succeed, the displayed stock in each tab will show 15 — but the server has the correct value (20, from two atomic increments). The UX is inconsistent; one tab is stale.
-
-More critically: if the same *product* is shown in both tabs and the component holds local state, both tabs could independently display an optimistic count that diverges from the server truth.
-
-**How the component design avoids it:**
-
-- We **don't do optimistic updates**. The displayed `stock` value is only updated *after* a successful server response, using the server's returned `stock_quantity` as the authoritative value.
-- The `stock-updated` event carries the server's value. A parent list/table that listens to this event re-renders from the server response, not from local arithmetic.
-- The backend uses `increment()`/`decrement()` (atomic SQL `UPDATE ... SET stock = stock + ?`) rather than a read-modify-write, so concurrent requests from both tabs each apply correctly at the DB level.
-- For multi-tab consistency, a real-world improvement would be a WebSocket/SSE channel that pushes stock updates to all open sessions for a product.
+Adding Airtel means one new `AirtelNormaliser` class. The handler, idempotency logic, and order-update logic are untouched.
 
 ---
 
-### Part 8: One thing I'd want to know before touching the payments infrastructure in production
+### Two merchants click "+5 stock" from different browser tabs simultaneously
 
-**Are there existing retry/replay mechanisms and what's their retry policy?**
+**Risk:** Both tabs read `currentStock: 10`, both compute `15` locally, both succeed — but one tab now shows a stale value.
 
-Specifically: if a webhook fails, how long does the provider retry, at what intervals, and is there any deduplication on their side? This determines how long our idempotency window needs to be and whether we need a dead-letter queue for failed events that fall off the retry window. Touching the handler without knowing this could introduce silent payment loss—events that failed and were never replayed, with no alert and no way to reconcile them.
-# coding-assesment
+**How the component avoids it:**
+- No optimistic updates — displayed stock only changes *after* the server responds with `stock_quantity`
+- `stock-updated` event passes the server's authoritative value, not local arithmetic
+- Backend uses atomic `increment()`/`decrement()` — `UPDATE stock = stock + ?` — so both requests apply correctly at the DB level regardless of order
+- Real-world improvement: WebSocket/SSE channel to push stock changes to all open tabs
+
+---
+
+### One thing to know before touching payments infrastructure in production
+
+**What is the provider's retry policy and deduplication window?**
+
+How long do they retry on non-200, at what intervals, and do they deduplicate on their side? This determines how long our idempotency window must cover and whether we need a dead-letter queue for events that fall off the retry window. Without knowing this, a handler change could silently drop payments that fail and are never replayed.
+
+---
+
