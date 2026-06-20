@@ -2,6 +2,7 @@
 
 **Candidate:** [Your Name]
 **Stack:** PHP 8.1+ / Laravel 10, MySQL, Vue 3 (Composition API), Vitest
+**Deployment:** Docker Compose
 
 ---
 
@@ -11,7 +12,7 @@
 ![Login screen](docs/screenshots/login.svg)
 
 ### Register Screen
-![Register screen](docs/screenshots/login.svg)
+![Register screen](docs/screenshots/register.svg)
 
 ### Dashboard — Product Grid
 ![Dashboard](docs/screenshots/dashboard.svg)
@@ -38,7 +39,105 @@ Full interactive API documentation (Postman):
 | `PATCH` | `/api/products/{id}/stock` | Bearer | Adjust stock by delta |
 | `POST` | `/api/webhooks/payment` | Signature | Payment callback handler |
 
-### Authentication
+---
+
+## Docker Setup
+
+All services run in Docker Compose. No local PHP, Node, or MySQL installation needed.
+
+### Services
+
+**1. `app` — Laravel Backend**
+- **Image:** Custom built from `laravel/Dockerfile`
+- **Port:** `8000` (maps to host `8000`)
+- **Purpose:** Runs `php artisan serve` automatically on startup, serving the REST API
+- **Volume:** Mounts `./laravel` directory for live code reloading
+- **Network:** Connected to `silktech-network` for inter-service communication
+
+**2. `db` — MySQL Database**
+- **Image:** `mysql:8.0` (official MySQL)
+- **Port:** `3306` (maps to host `3306`)
+- **Purpose:** Persistent data storage for merchants, products, orders, payments
+- **Credentials:** `root` / `root` (configured in `.env`)
+- **Volume:** `silktech-dbdata` persists data across container restarts
+- **Network:** Connected to `silktech-network` so the `app` container can reach it
+
+**3. `adminer` — Database Management UI**
+- **Image:** `adminer:latest` (lightweight DB admin tool)
+- **Port:** `8080` (maps to host `8080`)
+- **Purpose:** Visual database browser — useful for inspecting tables, running manual queries, testing without CLI
+- **URL:** `http://localhost:8080` → Login: `MySQL` server `db:3306`, user `root`, password `root`
+- **Network:** Connected to `silktech-network`
+
+### Network & Volumes
+
+- **`silktech-network`:** Bridge network allowing `app`, `db`, and `adminer` to communicate by hostname
+  - `app` connects to `db` via `DB_HOST=db` (hostname resolution)
+  - `adminer` connects to `db` via hostname `db`
+
+- **`silktech-dbdata`:** Named volume that persists MySQL data across container lifecycles
+  - `docker compose down` does NOT delete this volume
+  - `docker compose down -v` deletes it (full reset)
+
+---
+
+## Quick Start
+
+### First time setup
+
+```bash
+# 1. Build and start all services
+docker compose up -d
+
+# 2. Wait ~5 seconds for MySQL to be ready
+sleep 5
+
+# 3. Install Laravel dependencies
+docker compose exec app composer install
+
+# 4. Copy .env and generate app key
+docker compose exec app cp .env.example .env
+docker compose exec app php artisan key:generate
+
+# 5. Run migrations
+docker compose exec app php artisan migrate
+
+# 6. Seed demo data
+docker compose exec app php artisan db:seed
+
+# 7. Run tests (optional)
+docker compose exec app php artisan test
+```
+
+### Start/Stop
+
+```bash
+docker compose up -d      # Start all services (background)
+docker compose down        # Stop all services (keep data)
+docker compose down -v     # Stop and delete all volumes (full reset)
+docker compose logs -f app # Tail Laravel logs
+```
+
+### Access Services
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Laravel API | `http://localhost:8000` | See `.env` |
+| Adminer DB UI | `http://localhost:8080` | root / root |
+| Vue Dev Server | `http://localhost:5173` | (separate npm command) |
+
+### Run Commands Inside Container
+
+```bash
+docker compose exec app php artisan tinker     # Laravel shell
+docker compose exec app php artisan migrate    # Run migrations
+docker compose exec app php artisan test       # Run tests
+docker compose exec db mysql -uroot -proot     # MySQL CLI
+```
+
+---
+
+## Authentication
 
 All product endpoints require the `Authorization: Bearer {token}` header. Obtain the token from `/api/login` or `/api/register`. Without it, the API returns:
 
@@ -185,70 +284,6 @@ Use a positive number to add stock (`10`), negative to remove (`-5`). The API re
 { "message": "Insufficient stock. Current: 3, adjustment: -10." }
 ```
 
-### Payment Webhook — `POST /api/webhooks/payment`
-
-See the [Webhook section](#part-1--idempotent-payment-webhook) below for full details.
-
----
-
-## Setup
-
-### Laravel (Parts 1–3)
-
-```bash
-cd laravel
-composer install
-cp .env.example .env          # fill in DB_* vars
-php artisan key:generate
-php artisan migrate
-php artisan db:seed           # creates demo@silktech.io / password
-php artisan test              # runs all PHPUnit tests
-```
-
-### Vue (Part 4)
-
-```bash
-cd vue
-npm install
-npm run dev                   # Vite dev server → http://localhost:5173
-npm run test                  # Vitest unit tests
-```
-
-### Docker (recommended — no local PHP/Node install needed)
-
-```bash
-# First time setup
-make setup
-
-# Start everything
-make up
-
-# Run tests
-make test-backend
-make test-frontend
-
-# Open a shell inside Laravel container
-make shell
-```
-
-Services started by Docker:
-
-| Service | URL |
-|---------|-----|
-| Vue dev server | http://localhost:5173 |
-| Laravel API | http://localhost:8000 |
-| MySQL | localhost:3306 |
-| Redis | localhost:6379 |
-
----
-
-## Assumptions
-
-- Auth uses Laravel Sanctum (token-based). The `auth:sanctum` guard is referenced in routes.
-- Webhook provider authentication (HMAC signature verification) is handled in a `webhook.signature` middleware registered separately. The hook point is clearly marked in `routes/api.php`.
-- `merchants` and `merchant_orders` tables are pre-existing per the spec; a migration for them is included for local dev/test convenience, clearly commented.
-- The `order_reference` field on `payments` matches `merchant_orders.order_reference` directly (no join through a numeric FK), which keeps the webhook handler simpler and avoids one extra query.
-
 ---
 
 ## Part 1 — Idempotent Payment Webhook
@@ -277,23 +312,75 @@ Payment events are persisted for audit. A `reversed` event on a paid order flags
 
 ---
 
-## Testing the Webhook Locally with ngrok
+## Testing the Webhook Locally
 
-ngrok creates a public HTTPS URL that tunnels to your local server, letting M-Pesa (or any provider) send real callbacks to `localhost:8000` during development.
+### Important: Webhooks Only Work on Remote Servers
+
+**Webhooks cannot be sent to `localhost`** because payment providers (M-Pesa, Airtel, Stripe, etc.) are remote services that cannot reach your local machine. The webhook URL must be a publicly accessible HTTPS endpoint.
+
+### Local Development Options
+
+**Option 1: ngrok (Recommended for Development)**
+
+ngrok creates a **public HTTPS tunnel** to your local Docker container, allowing remote payment providers to send webhooks to your development machine.
+
+**Installation & Setup:**
 
 ```bash
-# Install: https://ngrok.com/download
-# Then:
-php artisan serve          # terminal 1
-./ngrok http 8000          # terminal 2
+# 1. Download ngrok: https://ngrok.com/download
+# 2. Extract and add to PATH (or run ./ngrok directly)
+
+# 3. Start ngrok tunnel (in a new terminal)
+./ngrok http 8000
+
+# Output:
+# Session Status         online
+# Account               [your-email]
+# Version               3.3.0
+# Region                us (United States)
+# Forwarding            https://abc123.ngrok.io -> http://localhost:8000
+#                       http://abc123.ngrok.io -> http://localhost:8000
 ```
 
-Copy the generated URL (e.g. `https://abc123.ngrok.io`) and register it with the provider as:
+**Register your ngrok URL with the payment provider:**
+
+Copy the HTTPS URL (e.g. `https://abc123.ngrok.io`) and register it as your webhook endpoint:
 ```
 https://abc123.ngrok.io/api/webhooks/payment
 ```
 
-The ngrok dashboard at `http://127.0.0.1:4040` shows every request and response in real time, making it easy to debug webhook payloads without touching production.
+**Monitor requests in real-time:**
+
+Open ngrok dashboard at `http://127.0.0.1:4040` to see every request, response, headers, and payload. Perfect for debugging webhook issues without logs.
+
+**Important notes:**
+- Every time you restart ngrok, you get a **new URL** (unless you have a paid ngrok account with fixed URLs)
+- ngrok is **for development only** — for production, use the actual domain
+- The tunnel expires when ngrok closes or your session ends
+- Payment providers may have IP whitelisting — ngrok uses shared IP addresses, so this may not work for all integrations
+
+**Option 2: Testing Server (Staging)**
+
+Deploy to a staging server with a real domain and test with actual payment provider test credentials. This is the most reliable approach but requires more setup.
+
+**Option 3: Postman/curl (Mocking)**
+
+Test the webhook handler locally without involving a real payment provider:
+
+```bash
+curl -X POST http://localhost:8000/api/webhooks/payment \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "mpesa",
+    "transaction_id": "QFL3X9Y2KP",
+    "order_reference": "SC-ORD-10456",
+    "amount": 2500.00,
+    "currency": "KES",
+    "msisdn": "254712345678",
+    "status": "completed",
+    "occurred_at": "2026-06-18T10:32:00Z"
+  }'
+```
 
 ---
 
@@ -345,7 +432,7 @@ The ngrok dashboard at `http://127.0.0.1:4040` shows every request and response 
 
 ## Database Schema
 
-```
+```sql
 payments(
   id,
   transaction_id    UNIQUE,   ← DB-level duplicate guard
@@ -484,3 +571,25 @@ How long do they retry on non-200, at what intervals, and do they deduplicate on
 
 ---
 
+## Assumptions
+
+- Auth uses Laravel Sanctum (token-based). The `auth:sanctum` guard is referenced in routes.
+- Webhook provider authentication (HMAC signature verification) is handled in a `webhook.signature` middleware registered separately. The hook point is clearly marked in `routes/api.php`.
+- `merchants` and `merchant_orders` tables are pre-existing per the spec; migrations are included for local dev/test convenience, clearly commented.
+- The `order_reference` field on `payments` matches `merchant_orders.order_reference` directly (no join through a numeric FK), which keeps the webhook handler simpler and avoids one extra query.
+- Docker Compose is the deployment method — no raw local Laravel or Node installation needed.
+- Webhooks are tested via ngrok for local development or on a staging server for integration testing.
+
+---
+
+## Time Breakdown
+
+| Part | Time |
+|------|------|
+| Part 1 (Webhook) | 1.5h |
+| Part 2 (Product API) | 0.75h |
+| Part 3 (SQL & Debugging) | 0.5h |
+| Part 4 (Vue Component) | 1.5h |
+| Part 4b (Tests) | 1h |
+| Part 5 (Short Answers) | 0.75h |
+| **Total** | **~6 hours** |
