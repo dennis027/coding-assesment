@@ -581,15 +581,3 @@ How long do they retry on non-200, at what intervals, and do they deduplicate on
 - Webhooks are tested via ngrok for local development or on a staging server for integration testing.
 
 ---
-
-## Time Breakdown
-
-| Part | Time |
-|------|------|
-| Part 1 (Webhook) | 1.5h |
-| Part 2 (Product API) | 0.75h |
-| Part 3 (SQL & Debugging) | 0.5h |
-| Part 4 (Vue Component) | 1.5h |
-| Part 4b (Tests) | 1h |
-| Part 5 (Short Answers) | 0.75h |
-| **Total** | **~6 hours** |
