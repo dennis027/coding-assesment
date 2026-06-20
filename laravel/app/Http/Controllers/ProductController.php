@@ -19,6 +19,7 @@ class ProductController extends Controller
     /**
      * GET /api/products
      * Paginated, filterable by category and in_stock, sortable by price|created_at.
+     * Merely fetches products belonging to the authenticated merchant.
      */
     public function index(Request $request): JsonResponse
     {
@@ -33,6 +34,7 @@ class ProductController extends Controller
         $merchant = $request->user();
         $perPage = $request->integer('per_page', 20);
 
+        // Scoped to the active merchant
         $query = Product::forMerchant($merchant->id);
 
         if ($request->filled('category')) {
@@ -69,19 +71,26 @@ class ProductController extends Controller
     /**
      * PATCH /api/products/{product}/stock
      * Atomically adjust stock with row-level locking to prevent race conditions.
-     * Validates that stock never goes below zero.
+     * Enforces strict merchant isolation checking before processing any changes.
      */
     public function adjustStock(AdjustStockRequest $request, Product $product): JsonResponse
     {
-        // 403 Bypass: Commented out for testing
-        // $this->authorize('update', $product);
+        // 🔒 STRICT OWNER ENFORCEMENT: 
+        // Instantly rejects the request with a 403 if the product does not belong to the active merchant.
+        if ((int) $product->merchant_id !== (int) $request->user()->id) {
+            return response()->json([
+                'message' => 'This action is unauthorized. You do not own this product.'
+            ], 403);
+        }
 
         $delta = $request->integer('delta');
 
         try {
             DB::transaction(function () use ($product, $delta) {
-                // Lock the row for the duration of the transaction
-                $fresh = Product::lockForUpdate()->findOrFail($product->id);
+                // Double-verify ownership scope during row-level locking
+                $fresh = Product::lockForUpdate()
+                    ->where('merchant_id', auth()->id())
+                    ->findOrFail($product->id);
 
                 $newStock = $fresh->stock_quantity + $delta;
 
@@ -100,7 +109,7 @@ class ProductController extends Controller
                     $fresh->decrement('stock_quantity', abs($delta));
                 }
 
-                // FIX: Sync memory with the exact database count without duplicating the delta calculation
+                // Sync the in-memory response data accurately
                 $product->stock_quantity = $newStock;
             });
         } catch (\DomainException $e) {
