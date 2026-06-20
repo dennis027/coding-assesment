@@ -10,6 +10,9 @@
 ### Login Screen
 ![Login screen](docs/screenshots/login.svg)
 
+### Register Screen
+![Register screen](docs/screenshots/login.svg)
+
 ### Dashboard — Product Grid
 ![Dashboard](docs/screenshots/dashboard.svg)
 
