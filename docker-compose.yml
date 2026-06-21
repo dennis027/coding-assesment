@@ -36,6 +36,22 @@ services:
     networks:
       - silktech-network
 
+  db_testing:
+    image: mysql:8.0
+    container_name: silktech-db-testing
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "3307:3306" # Map host port 3307 to container port 3306 to avoid conflicts
+    environment:
+      MYSQL_DATABASE: silkcommerce_testing
+      MYSQL_ROOT_PASSWORD: root
+    # Note: We do NOT persist volumes here so it resets clean if needed, 
+    networks:
+      - silktech-network
+
+      
+
   # Adminer Database Management Service
   adminer:
     image: adminer:latest
