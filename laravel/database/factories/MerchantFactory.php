@@ -13,6 +13,7 @@ class MerchantFactory extends Factory
     public function definition(): array
     {
         return [
+            'name'          => $this->faker->name(),
             'business_name' => $this->faker->company(),
             'email'         => $this->faker->unique()->safeEmail(),
             'password'      => Hash::make('password'), // use 'password' in tests
