@@ -1,6 +1,5 @@
 # Silktech Full-Stack Assessment — Submission
 
-**Candidate:** [Your Name]
 **Stack:** PHP 8.1+ / Laravel 10, MySQL, Vue 3 (Composition API), Vitest
 **Deployment:** Docker Compose
 

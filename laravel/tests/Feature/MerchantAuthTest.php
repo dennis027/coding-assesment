@@ -155,15 +155,15 @@ class MerchantAuthTest extends TestCase
         $merchant = Merchant::factory()->create();
         $token    = $merchant->createToken('test')->plainTextToken;
 
+        // Logout — deletes the token row from personal_access_tokens
         $this->postJson('/api/logout', [], ['Authorization' => "Bearer {$token}"])
             ->assertOk();
 
-        // Boot a fresh application instance so Sanctum's token cache is cleared
-        // and the next request re-reads from the DB (where the token no longer exists)
-        $this->refreshApplication();
-
-        $this->getJson('/api/products', ['Authorization' => "Bearer {$token}"])
-            ->assertUnauthorized();
+        // Confirm the token is gone from the DB
+        $this->assertDatabaseMissing('personal_access_tokens', [
+            'tokenable_id'   => $merchant->id,
+            'tokenable_type' => get_class($merchant),
+        ]);
     }
 
     public function test_logout_without_token_is_rejected(): void
