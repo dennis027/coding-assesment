@@ -14,15 +14,22 @@ class AdjustStockRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'delta' => ['required', 'integer'],
+            'delta' => [
+                'required',
+                'integer',
+                function ($attribute, $value, $fail) {
+                    if ((int) $value === 0) {
+                        $fail('Delta must be a non-zero integer.');
+                    }
+                },
+            ],
         ];
     }
 
     public function messages(): array
     {
         return [
-            'delta.required' => 'Delta (adjustment amount) is required.',
-            'delta.integer' => 'Delta must be an integer.',
+            'delta.not_in' => 'Delta must be a non-zero integer.',
         ];
     }
 }
