@@ -5,38 +5,18 @@
 
 ---
 
-## UI Screenshots
+## Table of Contents
 
-### Login Screen
-![Login screen](docs/screenshots/login.png)
-
-### Register Screen
-![Register screen](docs/screenshots/register.png)
-
-### Dashboard — Product Grid
-![Dashboard](docs/screenshots/dashboard.png)
-
-### Stock Adjustment — Interaction States
-![Stock adjustment states](docs/screenshots/stock-adjustment.png)
-
----
-
-## API Documentation
-
-Full interactive API documentation (Postman):
-**https://documenter.getpostman.com/view/55427973/2sBXwvJooR**
-
-### Endpoints at a glance
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/register` | — | Create merchant account |
-| `POST` | `/api/login` | — | Login, returns Bearer token |
-| `POST` | `/api/logout` | Bearer | Revoke token |
-| `GET` | `/api/products` | Bearer | Paginated product list |
-| `POST` | `/api/products` | Bearer | Create product |
-| `PATCH` | `/api/products/{id}/stock` | Bearer | Adjust stock by delta |
-| `POST` | `/api/webhooks/payment` | Signature | Payment callback handler |
+1. [Docker Setup](#docker-setup)
+2. [Quick Start](#quick-start)
+3. [API Documentation](#api-documentation)
+4. [Part 1 — Idempotent Payment Webhook](#part-1--idempotent-payment-webhook)
+5. [Part 2 — Merchant Product API](#part-2--merchant-product-api)
+6. [Part 3 — SQL & Debugging](#part-3--sql--debugging)
+7. [Part 4 — Vue.js Stock Widget](#part-4--vuejs-stock-widget)
+8. [Part 5 — Short Answers](#part-5--short-answers)
+9. [Database Schema](#database-schema)
+10. [Assumptions](#assumptions)
 
 ---
 
@@ -61,7 +41,14 @@ All services run in Docker Compose. No local PHP, Node, or MySQL installation ne
 - **Volume:** `silktech-dbdata` persists data across container restarts
 - **Network:** Connected to `silktech-network` so the `app` container can reach it
 
-**3. `adminer` — Database Management UI**
+**3. `db-test` — MySQL Test Database**
+- **Image:** `mysql:8.0` (official MySQL)
+- **Port:** `3307` (maps to host `3307`)
+- **Purpose:** Isolated database for running PHPUnit tests — dev data never touched
+- **Credentials:** `root` / `root` (configured in `.env.testing`)
+- **Network:** Connected to `silktech-network` so the `app` container can reach it
+
+**4. `adminer` — Database Management UI**
 - **Image:** `adminer:latest` (lightweight DB admin tool)
 - **Port:** `8080` (maps to host `8080`)
 - **Purpose:** Visual database browser — useful for inspecting tables, running manual queries, testing without CLI
@@ -136,7 +123,24 @@ docker compose exec db mysql -uroot -proot     # MySQL CLI
 
 ---
 
-## Authentication
+## API Documentation
+
+Full interactive API documentation (Postman):
+**https://documenter.getpostman.com/view/55427973/2sBXwvJooR**
+
+### Endpoints at a glance
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/register` | — | Create merchant account |
+| `POST` | `/api/login` | — | Login, returns Bearer token |
+| `POST` | `/api/logout` | Bearer | Revoke token |
+| `GET` | `/api/products` | Bearer | Paginated product list |
+| `POST` | `/api/products` | Bearer | Create product |
+| `PATCH` | `/api/products/{id}/stock` | Bearer | Adjust stock by delta |
+| `POST` | `/api/webhooks/payment` | Signature | Payment callback handler |
+
+### Authentication
 
 All product endpoints require the `Authorization: Bearer {token}` header. Obtain the token from `/api/login` or `/api/register`. Without it, the API returns:
 
@@ -309,96 +313,7 @@ Both pass the initial check simultaneously. Both attempt `INSERT INTO payments`.
 
 Payment events are persisted for audit. A `reversed` event on a paid order flags it as `pending_refund` for ops review — we never auto-refund, that has accounting side effects that deserve their own workflow.
 
----
-
-## Testing the Webhook Locally
-
-### Important: Webhooks Only Work on Remote Servers
-
-**Webhooks cannot be sent to `localhost`** because payment providers (M-Pesa, Airtel, Stripe, etc.) are remote services that cannot reach your local machine. The webhook URL must be a publicly accessible HTTPS endpoint.
-
-### Local Development Options
-
-**Option 1: ngrok (Recommended for Development)**
-
-ngrok creates a **public HTTPS tunnel** to your local Docker container, allowing remote payment providers to send webhooks to your development machine.
-
-**Installation & Setup:**
-
-```bash
-# 1. Download ngrok: https://ngrok.com/download
-# 2. Extract and add to PATH (or run ./ngrok directly)
-
-# 3. Start ngrok tunnel (in a new terminal)
-./ngrok http 8000
-
-# Output:
-# Session Status         online
-# Account               [your-email]
-# Version               3.3.0
-# Region                us (United States)
-# Forwarding            https://abc123.ngrok.io -> http://localhost:8000
-#                       http://abc123.ngrok.io -> http://localhost:8000
-```
-
-**Register your ngrok URL with the payment provider:**
-
-Copy the HTTPS URL (e.g. `https://abc123.ngrok.io`) and register it as your webhook endpoint:
-```
-https://abc123.ngrok.io/api/webhooks/payment
-```
-
-**Monitor requests in real-time:**
-
-Open ngrok dashboard at `http://127.0.0.1:4040` to see every request, response, headers, and payload. Perfect for debugging webhook issues without logs.
-
-**Important notes:**
-- Every time you restart ngrok, you get a **new URL** (unless you have a paid ngrok account with fixed URLs)
-- ngrok is **for development only** — for production, use the actual domain
-- The tunnel expires when ngrok closes or your session ends
-- Payment providers may have IP whitelisting — ngrok uses shared IP addresses, so this may not work for all integrations
-
-**Option 2: Testing Server (Staging)**
-
-Deploy to a staging server with a real domain and test with actual payment provider test credentials. This is the most reliable approach but requires more setup.
-
-**Option 3: Postman/curl (Mocking)**
-
-Test the webhook handler locally without involving a real payment provider:
-
-```bash
-curl -X POST http://localhost:8000/api/webhooks/payment \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "mpesa",
-    "transaction_id": "QFL3X9Y2KP",
-    "order_reference": "SC-ORD-10456",
-    "amount": 2500.00,
-    "currency": "KES",
-    "msisdn": "254712345678",
-    "status": "completed",
-    "occurred_at": "2026-06-18T10:32:00Z"
-  }'
-```
-
----
-
-## Webhook Request Documentation (Postman)
-
-### Sample Payload
-
-```json
-{
-  "provider": "mpesa",
-  "transaction_id": "QFL3X9Y2KP",
-  "order_reference": "SC-ORD-10456",
-  "amount": 2500.00,
-  "currency": "KES",
-  "msisdn": "254712345678",
-  "status": "completed",
-  "occurred_at": "2026-06-18T10:32:00Z"
-}
-```
+### Webhook Request Fields
 
 | Field | Description |
 |-------|-------------|
@@ -420,6 +335,39 @@ curl -X POST http://localhost:8000/api/webhooks/payment \
 | `422 Unprocessable` | Bad reference, amount mismatch, or order already paid |
 | `500 Internal Server Error` | DB failure — provider should retry |
 
+### Testing the Webhook Locally
+
+**Webhooks cannot be sent to `localhost`** because payment providers (M-Pesa, Airtel, Stripe, etc.) are remote services that cannot reach your local machine. The webhook URL must be a publicly accessible HTTPS endpoint.
+
+**Option 1: ngrok (Recommended for Development)**
+
+ngrok creates a public HTTPS tunnel to your local Docker container, allowing remote payment providers to send webhooks to your development machine.
+
+```bash
+# 1. Download ngrok: https://ngrok.com/download
+# 2. Start ngrok tunnel (in a new terminal)
+./ngrok http 8000
+
+# Output:
+# Forwarding   https://abc123.ngrok.io -> http://localhost:8000
+```
+
+Register the HTTPS URL with the payment provider:
+```
+https://abc123.ngrok.io/api/webhooks/payment
+```
+
+Open ngrok dashboard at `http://127.0.0.1:4040` to see every request, response, headers, and payload in real-time.
+
+**Important notes:**
+- Every time you restart ngrok, you get a new URL (unless you have a paid account with fixed URLs)
+- ngrok is for development only — for production, use the actual domain
+- Payment providers may have IP whitelisting — ngrok uses shared IP addresses
+
+**Option 2: Staging Server**
+
+Deploy to a staging server with a real domain and test with actual payment provider test credentials.
+
 ### Idempotency Testing (Postman)
 
 1. `POST` the sample payload → expect `201`, order is `paid`
@@ -429,50 +377,45 @@ curl -X POST http://localhost:8000/api/webhooks/payment \
 
 ---
 
-## Database Schema
+## Part 2 — Merchant Product API
 
-```sql
-payments(
-  id,
-  transaction_id    UNIQUE,   ← DB-level duplicate guard
-  provider,
-  order_reference,
-  amount,
-  currency,
-  msisdn,
-  status,
-  occurred_at,
-  raw_payload       JSON,     ← full payload stored for audit/replay
-  created_at,
-  updated_at
-)
+The product API is fully documented in the [API Documentation](#api-documentation) section above. Key implementation decisions:
 
-merchant_orders(
-  id,
-  merchant_id,
-  order_reference   UNIQUE,
-  status            ENUM(pending, paid, pending_refund, cancelled),
-  total_amount,
-  created_at,
-  updated_at
-)
-
-products(
-  id,
-  merchant_id,
-  name,
-  price             DECIMAL(12,2),
-  category,
-  stock_quantity    UNSIGNED INT,
-  deleted_at,       ← soft delete
-  created_at,
-  updated_at
-)
-```
+- All endpoints are scoped to the authenticated merchant via `auth:sanctum` middleware — a merchant can never view or modify another merchant's products
+- Stock adjustments use `SELECT FOR UPDATE` inside a DB transaction to prevent race conditions
+- Atomic `increment()`/`decrement()` SQL is used instead of read-modify-write to prevent overselling under concurrent load
+- `in_stock` filter accepts `true`, `false`, `1`, `0` as strings (URL query params are always strings — Laravel's `boolean` rule rejects `"true"`)
 
 ---
 
-## Part 3b — Bug Analysis
+## Part 3 — SQL & Debugging
+
+### 3a. Top 5 merchants by completed payment volume (last 30 days)
+
+```sql
+SELECT
+    m.id,
+    m.business_name,
+    COALESCE(SUM(p.amount), 0) AS total_payment_volume
+FROM merchants m
+LEFT JOIN merchant_orders mo
+    ON mo.merchant_id = m.id
+LEFT JOIN payments p
+    ON  p.merchant_order_id = mo.id
+    AND p.status            = 'completed'
+    AND p.created_at        >= NOW() - INTERVAL 30 DAY
+GROUP BY
+    m.id,
+    m.business_name
+ORDER BY
+    total_payment_volume DESC,
+    m.id ASC
+LIMIT 5;
+```
+
+The date filter and status filter are on the `JOIN` condition, not in `WHERE` — moving them to `WHERE` would turn the `LEFT JOIN` into an implicit `INNER JOIN`, dropping merchants with no qualifying payments. `COALESCE(SUM(...), 0)` converts `NULL` to `0` for merchants with no payments.
+
+### 3b. Bug Analysis
 
 ```php
 foreach ($cart->items as $item) {
@@ -485,7 +428,7 @@ foreach ($cart->items as $item) {
 Order::create(['cart_id' => $cart->id, 'status' => 'confirmed']);
 ```
 
-### Bug 1 — Race condition (read-modify-write)
+**Bug 1 — Race condition (read-modify-write)**
 
 `Product::find()` reads stock into PHP memory. Between `find()` and `save()`, a concurrent request reads the same stale value. Both deduct and save — overselling.
 
@@ -506,17 +449,78 @@ DB::transaction(function () use ($cart) {
 });
 ```
 
-### Bug 2 — Order confirmed even when stock check silently fails
+**Bug 2 — Order confirmed even when stock check silently fails**
 
 If any item fails `stock_quantity >= $item->quantity`, the `if` block is skipped silently, but `Order::create()` runs anyway — confirmed order for unreserved items.
 
 **Fix:** Throw inside the loop on failure; wrap everything in a transaction so `Order::create()` only runs if all items succeed.
 
-### Bug 3 — No transaction wrapping
+**Bug 3 — No transaction wrapping**
 
 A crash mid-loop leaves partially deducted stock with no order created — inconsistent state with no way to recover.
 
 **Fix:** Entire loop + `Order::create()` must be inside `DB::transaction()`.
+
+---
+
+## Part 4 — Vue.js Stock Widget
+
+### UI Screenshots
+
+#### Login Screen
+![Login screen](docs/screenshots/login.svg)
+
+#### Register Screen
+![Register screen](docs/screenshots/register.svg)
+
+#### Dashboard — Product Grid
+![Dashboard](docs/screenshots/dashboard.svg)
+
+#### Stock Adjustment — Interaction States
+![Stock adjustment states](docs/screenshots/stock-adjustment.svg)
+
+### Running the Vue App
+
+```bash
+cd vue
+npm install
+npm run dev       # http://localhost:5173
+npm run test      # Vitest unit tests
+```
+
+### Demo credentials (after seeding)
+
+| Email | Password | Business |
+|-------|----------|----------|
+| `admin@silktech.com` | `password123` | Silktech Retail |
+| `alpha@silkcommerce.com` | `password123` | Alpha Logistics |
+| `omega@silkcommerce.com` | `password123` | Omega Digital Solutions |
+
+### Component design decisions
+
+- **No optimistic updates** — the displayed stock count only changes after the server responds with its authoritative `stock_quantity`. This means two tabs adjusting the same product simultaneously both end up showing the correct server value.
+- **Amount input is always positive** — the Add and Remove buttons determine the sign sent to the API (`delta: +amount` or `delta: -amount`). This eliminates the confusing UX of typing negative numbers.
+- **Remove is client-side guarded** — the Remove button is disabled before any API call if `amount > stock`, so the user gets immediate feedback without waiting for a server round-trip.
+- **Token from localStorage** — the Bearer token is read directly from `localStorage('silk_token')` inside the component, keeping the props clean (exactly the four props specified in the brief).
+- **`stock-updated` event** — emits the server's returned `stock_quantity` so a parent dashboard can update its product list without a full page reload.
+
+### File structure
+
+```
+vue/src/
+├── composables/
+│   ├── useAuth.js        — register, login, logout, token in localStorage
+│   └── useProducts.js    — GET /api/products, POST /api/products
+├── views/
+│   ├── LoginView.vue     — email/password form → POST /api/login
+│   ├── RegisterView.vue  — name/business/email/password → POST /api/register
+│   └── DashboardView.vue — sticky navbar, product grid, add product form
+├── components/
+│   └── StockWidget.vue   — the Part 4 spec component (exact 4 props)
+├── tests/
+│   └── StockWidget.test.js — Vitest tests covering all 4 spec parts
+└── App.vue               — routes between login, register, and dashboard
+```
 
 ---
 
@@ -570,6 +574,49 @@ How long do they retry on non-200, at what intervals, and do they deduplicate on
 
 ---
 
+## Database Schema
+
+```sql
+payments(
+  id,
+  transaction_id    UNIQUE,   -- DB-level duplicate guard
+  provider,
+  order_reference,
+  amount,
+  currency,
+  msisdn,
+  status,
+  occurred_at,
+  raw_payload       JSON,     -- full payload stored for audit/replay
+  created_at,
+  updated_at
+)
+
+merchant_orders(
+  id,
+  merchant_id,
+  order_reference   UNIQUE,
+  status            ENUM(pending, paid, pending_refund, cancelled),
+  total_amount,
+  created_at,
+  updated_at
+)
+
+products(
+  id,
+  merchant_id,
+  name,
+  price             DECIMAL(12,2),
+  category,
+  stock_quantity    UNSIGNED INT,
+  deleted_at,       -- soft delete
+  created_at,
+  updated_at
+)
+```
+
+---
+
 ## Assumptions
 
 - Auth uses Laravel Sanctum (token-based). The `auth:sanctum` guard is referenced in routes.
@@ -578,5 +625,3 @@ How long do they retry on non-200, at what intervals, and do they deduplicate on
 - The `order_reference` field on `payments` matches `merchant_orders.order_reference` directly (no join through a numeric FK), which keeps the webhook handler simpler and avoids one extra query.
 - Docker Compose is the deployment method — no raw local Laravel or Node installation needed.
 - Webhooks are tested via ngrok for local development or on a staging server for integration testing.
-
----
